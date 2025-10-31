@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { MovimientoInventario, TipoMovimiento } from '../entities/movimiento-inventario/movimiento-inventario.entity';
 import { Producto } from '../entities/producto/producto.entity';
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 
 interface CreateMovimientoDto {
   productoId: string;
@@ -26,6 +27,16 @@ describe('MovimientoInventarioService', () => {
     findOne: jest.Mock;
     save: jest.Mock;
   };
+  let mockManager: {
+    findOne: jest.Mock;
+    find: jest.Mock;
+    save: jest.Mock;
+    getRepository: jest.Mock;
+  };
+  let mockDataSource: {
+    transaction: jest.Mock;
+    createQueryRunner: jest.Mock;
+  };
 
   beforeEach(async () => {
     movimientoRepo = {
@@ -39,6 +50,36 @@ describe('MovimientoInventarioService', () => {
       save: jest.fn(),
     };
 
+    // Define un mockManager que simule el comportamiento del EntityManager
+    mockManager = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      save: jest.fn(),
+      getRepository: jest.fn((entity) => {
+        if (entity === MovimientoInventario) return movimientoRepo;
+        if (entity === Producto) return productoRepo;
+        return undefined;
+      }),
+    };
+
+    // Prepara un queryRunner simulado y el dataSource con createQueryRunner
+    const mockQueryRunner = {
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+      manager: mockManager,
+    };
+
+    // Configura mockDataSource para simular transacciones (transaction y createQueryRunner)
+    mockDataSource = {
+      transaction: jest.fn().mockImplementation(async (callback) => {
+        return callback(mockManager);
+      }),
+      createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MovimientoInventarioService,
@@ -49,6 +90,10 @@ describe('MovimientoInventarioService', () => {
         {
           provide: getRepositoryToken(Producto),
           useValue: productoRepo,
+        },
+        {
+          provide: DataSource,
+          useValue: mockDataSource,
         },
       ],
     }).compile();
@@ -71,7 +116,7 @@ describe('MovimientoInventarioService', () => {
         nota: 'Entrada de mercancía',
       };
 
-      productoRepo.findOne.mockResolvedValue(mockProducto);
+  productoRepo.findOne.mockResolvedValue(mockProducto);
       const nuevoStock = mockProducto.stockActual + createDto.cantidad;
       
       movimientoRepo.create.mockReturnValue({
@@ -79,15 +124,12 @@ describe('MovimientoInventarioService', () => {
         producto: mockProducto,
         timestamp: new Date()
       });
-      movimientoRepo.save.mockImplementation(m => m);
-      productoRepo.save.mockImplementation(p => p);
 
-      const result = await service.create(createDto);
+      await service.create(createDto);
 
-      expect(productoRepo.save).toHaveBeenCalledWith({
-        ...mockProducto,
+      expect(mockManager.save).toHaveBeenCalledWith(expect.objectContaining({
         stockActual: nuevoStock,
-      });
+      }));
     });
 
     it('crea movimiento de salida y actualiza stock', async () => {
@@ -103,7 +145,7 @@ describe('MovimientoInventarioService', () => {
         precioUnitario: 150,
       };
 
-      productoRepo.findOne.mockResolvedValue(mockProducto);
+  productoRepo.findOne.mockResolvedValue(mockProducto);
       const nuevoStock = mockProducto.stockActual - createDto.cantidad;
 
       movimientoRepo.create.mockReturnValue({
@@ -111,15 +153,12 @@ describe('MovimientoInventarioService', () => {
         producto: mockProducto,
         timestamp: new Date()
       });
-      movimientoRepo.save.mockImplementation(m => m);
-      productoRepo.save.mockImplementation(p => p);
 
-      const result = await service.create(createDto);
+      await service.create(createDto);
 
-      expect(productoRepo.save).toHaveBeenCalledWith({
-        ...mockProducto,
+      expect(mockManager.save).toHaveBeenCalledWith(expect.objectContaining({
         stockActual: nuevoStock,
-      });
+      }));
     });
 
     it('lanza error si no hay stock suficiente para salida', async () => {
@@ -135,13 +174,15 @@ describe('MovimientoInventarioService', () => {
         precioUnitario: 150,
       };
 
-      productoRepo.findOne.mockResolvedValue(mockProducto);
+  productoRepo.findOne.mockResolvedValue(mockProducto);
 
-      await expect(service.create(createDto)).rejects.toThrow(ConflictException);
+  await expect(service.create(createDto)).rejects.toThrow(ConflictException);
+  expect(mockDataSource.createQueryRunner).toHaveBeenCalled();
+  expect(productoRepo.findOne).toHaveBeenCalled();
     });
 
     it('lanza error si producto no existe', async () => {
-      productoRepo.findOne.mockResolvedValue(null);
+  productoRepo.findOne.mockResolvedValue(null);
 
       const createDto: CreateMovimientoDto = {
         productoId: 'noexiste',
@@ -150,7 +191,9 @@ describe('MovimientoInventarioService', () => {
         precioUnitario: 100,
       };
 
-      await expect(service.create(createDto)).rejects.toThrow(NotFoundException);
+  await expect(service.create(createDto)).rejects.toThrow(NotFoundException);
+  expect(mockDataSource.createQueryRunner).toHaveBeenCalled();
+  expect(productoRepo.findOne).toHaveBeenCalled();
     });
 
   it('maneja cantidad negativa tomando el valor absoluto', async () => {
@@ -165,25 +208,21 @@ describe('MovimientoInventarioService', () => {
         tipo: TipoMovimiento.COMPRA,
       };
 
-      productoRepo.findOne.mockResolvedValue(mockProducto);
-  // Nota: el servicio aplica la cantidad tal como viene (espera cantidades positivas en el DTO).
-  // Si se pasa una cantidad negativa en el DTO, el nuevo stock será stockActual + cantidad (negativa).
-  const nuevoStock = mockProducto.stockActual + createDto.cantidad;
+        productoRepo.findOne.mockResolvedValue(mockProducto);
+        const nuevoStock = mockProducto.stockActual + Math.abs(createDto.cantidad);
 
       movimientoRepo.create.mockReturnValue({
         ...createDto,
         producto: mockProducto,
         timestamp: new Date(),
       });
-      movimientoRepo.save.mockImplementation(m => m);
-      productoRepo.save.mockImplementation(p => p);
 
-      const result = await service.create(createDto);
+      await service.create(createDto);
 
-      expect(productoRepo.save).toHaveBeenCalledWith({
-        ...mockProducto,
+      expect(mockManager.save).toHaveBeenCalledWith(expect.objectContaining({
         stockActual: nuevoStock,
-      });
+      }));
+        expect(mockDataSource.createQueryRunner).toHaveBeenCalled();
     });
   });
 

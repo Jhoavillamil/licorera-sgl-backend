@@ -1,0 +1,86 @@
+name: Test Suite
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: sgl_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # Corregido: v4 -> v5
+      - uses: actions/checkout@v5
+      
+      # Corregido: v4 -> v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Validate environment
+        working-directory: backend
+        run: |
+          echo "Node version: $(node --version)"
+          echo "NPM version: $(npm --version)"
+          echo "PostgreSQL connection test..."
+          npx typeorm-ts-node-commonjs query "SELECT 1" -d src/config/data-source.ts
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_USER: test_user
+          DB_PASS: test_pass
+          DB_NAME: sgl_test
+          NODE_ENV: test
+      
+      - name: Run unit & integration tests
+        working-directory: backend
+        run: npm test -- --coverage --coverageReporters=text-lcov
+        env:
+          NODE_ENV: test
+        continue-on-error: false
+      
+      - name: Run migrations and seeders
+        working-directory: backend
+        run: npm run typeorm:run-migrations:test && npm run seed:test
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_USER: test_user
+          DB_PASS: test_pass
+          DB_NAME: sgl_test
+          NODE_ENV: test
+
+      - name: Run E2E tests
+        working-directory: backend
+        run: npm run test:e2e
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_USER: test_user
+          DB_PASS: test_pass
+          DB_NAME: sgl_test
+          NODE_ENV: test
+
+      # Corregido: v3 -> v4 (Esta ya la tenías bien)
+      - name: Upload test coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage/
+          if-no-files-found: warn
