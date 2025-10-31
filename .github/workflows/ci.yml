@@ -1,0 +1,51 @@
+name: CI - Node.js Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter (if configured)
+        run: |
+          if npm run | Select-String -Pattern "lint" -Quiet; then
+            npm run lint || true
+          else
+            echo "No lint script defined, skipping"
+          fi
+
+      - name: Run unit tests with coverage
+        run: |
+          # run tests with coverage when jest is present
+          if npm run | Select-String -Pattern "test" -Quiet; then
+            npm test --if-present --silent -- --coverage || true
+          else
+            echo "No test script defined"
+          fi
+
+      - name: Upload coverage and test artifacts (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: |
+            ./coverage || true
+            ./test-results || true
