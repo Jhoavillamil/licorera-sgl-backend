@@ -116,6 +116,30 @@ describe('UsersService', () => {
       expect(userRepo.save).toHaveBeenCalled();
     });
 
+    it('no modifica el hash de contraseña si no se pasa password en el DTO', async () => {
+      const userId = '2';
+      const dto: UpdateUserDto = {
+        email: 'another@test.com',
+      };
+
+      const existingUser = {
+        id: userId,
+        email: 'old2@test.com',
+        password: await bcrypt.hash('somepass', 10),
+        roles: [],
+      };
+
+      userRepo.findOne.mockResolvedValue(existingUser);
+      userRepo.save.mockImplementation(user => user);
+
+      const previousHash = existingUser.password;
+
+      const result = await service.updateUser(userId, dto);
+
+      expect(result.email).toBe(dto.email);
+      expect(result.password).toBe(previousHash);
+    });
+
     it('hashea nueva contraseña al actualizar', async () => {
       const userId = '1';
       const newPassword = 'newpass123';

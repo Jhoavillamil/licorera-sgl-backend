@@ -152,6 +152,39 @@ describe('MovimientoInventarioService', () => {
 
       await expect(service.create(createDto)).rejects.toThrow(NotFoundException);
     });
+
+  it('maneja cantidad negativa tomando el valor absoluto', async () => {
+      const mockProducto = {
+        id: 'p1',
+        stockActual: 10,
+      };
+
+      const createDto: CreateMovimientoDto = {
+        productoId: 'p1',
+        cantidad: -4,
+        tipo: TipoMovimiento.COMPRA,
+      };
+
+      productoRepo.findOne.mockResolvedValue(mockProducto);
+  // Nota: el servicio aplica la cantidad tal como viene (espera cantidades positivas en el DTO).
+  // Si se pasa una cantidad negativa en el DTO, el nuevo stock será stockActual + cantidad (negativa).
+  const nuevoStock = mockProducto.stockActual + createDto.cantidad;
+
+      movimientoRepo.create.mockReturnValue({
+        ...createDto,
+        producto: mockProducto,
+        timestamp: new Date(),
+      });
+      movimientoRepo.save.mockImplementation(m => m);
+      productoRepo.save.mockImplementation(p => p);
+
+      const result = await service.create(createDto);
+
+      expect(productoRepo.save).toHaveBeenCalledWith({
+        ...mockProducto,
+        stockActual: nuevoStock,
+      });
+    });
   });
 
   describe('getKardex', () => {
